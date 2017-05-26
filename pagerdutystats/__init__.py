@@ -3,7 +3,7 @@
 USAGE= \
 """
 Usage:
-    pagerduty.py <subdomain> <api-token> (all|wakeups|flakes) [--top=<top> --no-thurs --email] [--start=<start> [--end=<end>] | --last=<last>]
+    pagerduty.py <subdomain> <api-token> <policy> (all|wakeups|flakes) [--top=<top> --no-thurs --email] [--start=<start> [--end=<end>] | --last=<last>]
     pagerduty.py mtr [--start=<start> [--end=<end>] | --last=<last>]
 
 Options:
@@ -58,11 +58,11 @@ class Incident(pygerduty.Incident):
 
 class Incidents(pygerduty.Incidents):
 
-    def __init__(self, pagerduty):
+    def __init__(self, pagerduty, policy):
         pygerduty.Incidents.__init__(self, pagerduty)
         self.container = Incident
+        self.ops_policy = policy
 
-    ops_policy = "PKOFU92"
 
     def all(self, **kwargs):
         for incident in self.list(**kwargs):
@@ -94,9 +94,9 @@ class Incidents(pygerduty.Incidents):
 
 class PagerDuty(pygerduty.PagerDuty):
 
-    def __init__(self, subdomain, api_token):
+    def __init__(self, subdomain, api_token, policy):
         pygerduty.PagerDuty.__init__(self, subdomain, api_token)
-        self.incidents = Incidents(self)
+        self.incidents = Incidents(self, policy)
 
     def do_list(self, command, no_thurs, **kwargs):
         if no_thurs:
@@ -192,7 +192,7 @@ def main():
     else:
         end = datetime.strftime(datetime.utcnow(),"%Y-%m-%dT%H:%M:%SZ")
 
-    pager = PagerDuty(argv['<subdomain>'], argv['<api-token>'])
+    pager = PagerDuty(argv['<subdomain>'], argv['<api-token>'], argv['<policy>'])
 
     for command in ['all','wakeups','flakes']:
         if argv[command]:
