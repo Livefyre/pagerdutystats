@@ -27,8 +27,8 @@ class Incident(pygerduty.Incident):
     def get_description(self):
         data = self.trigger_summary_data
         try:
-            if data.SERVICEDESC and data.SERVICESTATE:
-                desc = " - ".join((data.SERVICEDESC, data.SERVICESTATE))
+            if data.SERVICEDESC and data.SERVICESTATE and data.HOSTNAME:
+                desc = " - ".join((data.SERVICEDESC, data.SERVICESTATE, data.HOSTNAME))
             elif data.HOSTNAME and data.HOSTSTATE:
                 desc = " - ".join((data.HOSTNAME, data.HOSTSTATE))
         except AttributeError:
@@ -151,22 +151,49 @@ def pprint_rankings(rankings):
     for (desc, count) in sorted(rankings.keys(), key=lambda x: -x[1]):
         print "%s\t%s" % (str(count), desc)
 
-def generate_html_ranking_file(rankings):
+def generate_html_ranking_file(rankings_prod, rankings_staging):
     tmp_file = open('tmp.txt', 'w')
-    tmp_file.write("<html><table><thead><th>Count</th><th>Alarm</th><th>Incidents</th><th></th></thead><tbody>")
-    for (desc, count) in sorted(rankings.keys(), key=lambda x: -x[1]):
-        incidents = rankings[(desc,count)]
+    tmp_file.write("<html><p>Statistics for Prod Servers</p><table><thead><th>Count</th><th>Alarm</th><th>Incidents</th><th></th></thead><tbody>")
+    for (desc, count) in sorted(rankings_prod.keys(), key=lambda x: -x[1]):
+        incidents = rankings_prod[(desc,count)]
         tmp_file.write("<tr><td>" + "</td><td>".join((str(count), desc)) + "</td><td>" +
             incidents[0].link() + "</td><td>" + incidents[0].friendly_pac_time("created_on") + "</td></tr>")
         for incident in incidents[1:]:
             tmp_file.write("<tr><td></td><td></td><td>" + incident.link() + "</td><td>" +
                 incident.friendly_pac_time("created_on") + "</td></tr>")
-    tmp_file.write("</tbody></table></body></html>")
+    tmp_file.write("</tbody></table>")
+    tmp_file.write("<br><br><br><p>Statistics for Staging Servers</p><table><thead><th>Count</th><th>Alarm</th><th>Incidents</th><th></th></thead><tbody>")
+    for (desc, count) in sorted(rankings_staging.keys(), key=lambda x: -x[1]):
+        incidents = rankings_staging[(desc,count)]
+        tmp_file.write("<tr><td>" + "</td><td>".join((str(count), desc)) + "</td><td>" +
+            incidents[0].link() + "</td><td>" + incidents[0].friendly_pac_time("created_on") + "</td></tr>")
+        for incident in incidents[1:]:
+            tmp_file.write("<tr><td></td><td></td><td>" + incident.link() + "</td><td>" +
+                incident.friendly_pac_time("created_on") + "</td></tr>")
+    tmp_file.write("</tbody></table></html>")
+    return tmp_file
 
-def email_output(incidents, top_count=None):
-    incident_list = list(incidents)
-    generate_html_ranking_file(top(incident_list, top_count))
-    pprint_incidents(incident_list)
+def segregation(incidents):
+   incident_list_staging = list()
+   incident_list_prod = list()
+   for incident in incidents:
+        desc = incident.get_description()
+        if ("staging" in desc):
+            incident_list_staging.append(incident)
+        else:
+            incident_list_prod.append(incident)
+   return (incident_list_prod, incident_list_staging)
+
+def email_output(incident_prod, incident_staging, top_count=None):
+    rankings_staging = top(incident_staging, top_count)
+    rankings_prod = top(incident_prod, top_count)
+    tmp_file = generate_html_ranking_file(rankings_prod, rankings_staging)
+    print("Report-1: Statistics for Production Servers")
+    pprint_incidents(incident_prod)
+    print("\n")
+    print("Report-2: Statistics for Staging Servers")
+    pprint_incidents(incident_staging)
+
 
 def pacific_to_utc(naive_timestamp):
     aware_time = parse_timestamp(naive_timestamp,gettz('America/Los_Angeles'))
@@ -193,18 +220,21 @@ def main():
         end = datetime.strftime(datetime.utcnow(),"%Y-%m-%dT%H:%M:%SZ")
 
     pager = PagerDuty(argv['<subdomain>'], argv['<api-token>'], argv['<policy>'])
-
     for command in ['all','wakeups','flakes']:
         if argv[command]:
             incidents = pager.do_list(command, argv['--no-thurs'], since=start, until=end)
-
+            incident_list = list(incidents)
+            (incident_list_prod, incident_list_staging)=segregation(incident_list)
             if incidents:
                 if argv['--email']:
-                    email_output(incidents, argv['--top'])
+                    email_output(incident_list_prod, incident_list_staging, argv['--top'])
                 elif argv['--top']:
-                    pprint_rankings(top(incidents, argv['--top']))
+                    pprint_rankings(top(incident_list_prod, argv['--top']))
+                    pprint_rankings(top(incident_list_staging, argv['--top']))
                 else:
-                    pprint_incidents(incidents)
+                    pprint_incidents(incident_list_prod)
+                    pprint_incidents(incident_list_staging)
+
 
     if argv['mtr']:
         print pager.get_mtr(since=start, until=end)
