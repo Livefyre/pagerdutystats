@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='pagerdutystats',
-      version='0.0.3',
+      version='0.0.4',
       description='Tool for calculating PagerDuty stats',
       url='http://github.com/livefyre/pagerdutystats',
       author='Nicholas Fowler',
