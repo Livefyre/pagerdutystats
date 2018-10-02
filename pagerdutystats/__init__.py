@@ -3,7 +3,7 @@
 USAGE= \
 """
 Usage:
-    pagerduty.py <subdomain> <api-token> <policy> (all|wakeups|flakes) [--top=<top> --no-thurs --email] [--start=<start> [--end=<end>] | --last=<last>]
+    pagerduty.py <api-token> <policy> (all|wakeups|flakes) [--top=<top> --no-thurs --email] [--start=<start> [--end=<end>] | --last=<last>]
     pagerduty.py mtr [--start=<start> [--end=<end>] | --last=<last>]
 
 Options:
@@ -14,7 +14,7 @@ Options:
 """
 
 from docopt import docopt
-import pygerduty
+import pygerduty.v2
 from datetime import datetime, timedelta
 from dateutil.tz import *
 import dateutil.parser
@@ -25,20 +25,13 @@ import sys
 class Incident(pygerduty.Incident):
 
     def get_description(self):
-        data = self.trigger_summary_data
         try:
-            if data.SERVICEDESC and data.SERVICESTATE and data.HOSTNAME:
-                desc = " - ".join((data.SERVICEDESC, data.SERVICESTATE, data.HOSTNAME))
-            elif data.HOSTNAME and data.HOSTSTATE:
-                desc = " - ".join((data.HOSTNAME, data.HOSTSTATE))
+            desc = self.title
         except AttributeError:
             try:
-                desc = data.description
-            except AttributeError:
-                try:
-                    desc = data.subject
-                except:
-                    desc = ''
+                desc = self.description
+            except:
+                desc = ''
         return desc
 
     def pacific_time(self, timeattr):
@@ -66,12 +59,13 @@ class Incidents(pygerduty.Incidents):
 
     def all(self, **kwargs):
         for incident in self.list(**kwargs):
+            import pdb; pdb.set_trace()
             if incident.escalation_policy.id == self.ops_policy:
                 yield incident
 
     def wakeups(self, **kwargs):
         for incident in self.all(**kwargs):
-            time = incident.pacific_time("created_on")
+            time = incident.pacific_time("created_at")
             night = time.replace(hour=23, minute=0, second=0)
             morning = time.replace(hour=8, minute=0, second=0)
             if time > night or time < morning:
@@ -85,17 +79,17 @@ class Incidents(pygerduty.Incidents):
     #  flakes: resolved by API in under 10 minutes and never acknowledged
     def flakes(self, **kwargs):
         for incident in self.resolved(**kwargs):
-            created_on  = incident.pacific_time("created_on")
-            last_status = incident.pacific_time("last_status_change_on")
-            if last_status - created_on < timedelta(minutes=10) and not incident.resolved_by_user:
+            created_at  = incident.pacific_time("created_at")
+            last_status = incident.pacific_time("last_status_change_at")
+            if last_status - created_at < timedelta(minutes=10) and not incident.last_status_change_by:
                 if not [entry for entry in incident.log_entries.list() if entry.type == 'acknowledge']:
                     yield incident
 
 
-class PagerDuty(pygerduty.PagerDuty):
+class PagerDuty(pygerduty.v2.PagerDuty):
 
-    def __init__(self, subdomain, api_token, policy):
-        pygerduty.PagerDuty.__init__(self, subdomain, api_token)
+    def __init__(self, api_token, policy):
+        pygerduty.v2.PagerDuty.__init__(self, api_token)
         self.incidents = Incidents(self, policy)
 
     def do_list(self, command, no_thurs, **kwargs):
@@ -111,9 +105,9 @@ class PagerDuty(pygerduty.PagerDuty):
         #  list of times to resolution
         ttrs = list()
         for incident in self.incidents.resolved(**kwargs):
-            created_on = incident.pacific_time("created_on")
-            rslv_time  = incident.pacific_time("last_status_change_on")
-            ttr = (rslv_time - created_on).total_seconds()
+            created_at = incident.pacific_time("created_at")
+            rslv_time  = incident.pacific_time("last_status_change_at")
+            ttr = (rslv_time - created_at).total_seconds()
             ttrs.append(int(ttr))
         return sum(ttrs)/len(ttrs) if ttrs else 0
 
@@ -137,13 +131,13 @@ def top(incidents, count=None):
 
 def strip_thursday(incidents):
     for incident in incidents:
-        created_on = incident.pacific_time("created_on")
-        if not created_on.weekday() == 3:
+        created_at = incident.pacific_time("created_at")
+        if not created_at.weekday() == 3:
             yield incident
 
 def pprint_incidents(incidents):
-    for incident in sorted(incidents, key=lambda x: x.pacific_time("created_on")):
-        created = incident.iso_pac_time("created_on")
+    for incident in sorted(incidents, key=lambda x: x.pacific_time("created_at")):
+        created = incident.iso_pac_time("created_at")
         interesting = tuple([incident.id, created, incident.get_description()])
         print "\t".join(interesting)
 
@@ -157,19 +151,19 @@ def generate_html_ranking_file(rankings_prod, rankings_staging):
     for (desc, count) in sorted(rankings_prod.keys(), key=lambda x: -x[1]):
         incidents = rankings_prod[(desc,count)]
         tmp_file.write("<tr><td>" + "</td><td>".join((str(count), desc)) + "</td><td>" +
-            incidents[0].link() + "</td><td>" + incidents[0].friendly_pac_time("created_on") + "</td></tr>")
+            incidents[0].link() + "</td><td>" + incidents[0].friendly_pac_time("created_at") + "</td></tr>")
         for incident in incidents[1:]:
             tmp_file.write("<tr><td></td><td></td><td>" + incident.link() + "</td><td>" +
-                incident.friendly_pac_time("created_on") + "</td></tr>")
+                incident.friendly_pac_time("created_at") + "</td></tr>")
     tmp_file.write("</tbody></table>")
     tmp_file.write("<br><br><br><p>Statistics for Staging Servers</p><table><thead><th>Count</th><th>Alarm</th><th>Incidents</th><th></th></thead><tbody>")
     for (desc, count) in sorted(rankings_staging.keys(), key=lambda x: -x[1]):
         incidents = rankings_staging[(desc,count)]
         tmp_file.write("<tr><td>" + "</td><td>".join((str(count), desc)) + "</td><td>" +
-            incidents[0].link() + "</td><td>" + incidents[0].friendly_pac_time("created_on") + "</td></tr>")
+            incidents[0].link() + "</td><td>" + incidents[0].friendly_pac_time("created_at") + "</td></tr>")
         for incident in incidents[1:]:
             tmp_file.write("<tr><td></td><td></td><td>" + incident.link() + "</td><td>" +
-                incident.friendly_pac_time("created_on") + "</td></tr>")
+                incident.friendly_pac_time("created_at") + "</td></tr>")
     tmp_file.write("</tbody></table></html>")
     return tmp_file
 
@@ -219,7 +213,7 @@ def main():
     else:
         end = datetime.strftime(datetime.utcnow(),"%Y-%m-%dT%H:%M:%SZ")
 
-    pager = PagerDuty(argv['<subdomain>'], argv['<api-token>'], argv['<policy>'])
+    pager = PagerDuty(argv['<api-token>'], argv['<policy>'])
     for command in ['all','wakeups','flakes']:
         if argv[command]:
             incidents = pager.do_list(command, argv['--no-thurs'], since=start, until=end)
